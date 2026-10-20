@@ -2,6 +2,10 @@
 # ИГРА «СОЛЯНЫЕ ШАХТЫ»
 # Автор: Александр Алиев
 # Дата: сентябрь 2026
+# Решение о равенстве: при наличии одинаковых по силе
+# максимальных ударов врага, функция max возвращает
+# первую такую строку благодаря свойству устойчивости.
+# Это осознанный выбор для сохранения хронологии.
 # ================================================
 
 import random
@@ -44,13 +48,80 @@ base_attack = 10
 damage = base_attack + strength * 1.5
 crit_damage = damage * 2
 
+def hero_hit(strike_n):
+    """
+    Принимает: порядковый номер удара strike_n (int).
+    Возвращает: кортеж (hit_damage: float, is_crit: bool).
+    Ничего не печатает и не меняет глобальное состояние.
+    """
+    if strike_n % 3 == 0:
+        return crit_damage, True
+    return damage, False
+
+def fight(enemy, hero_health):
+    """
+    Принимает: имя врага enemy (str), текущее здоровье героя hero_health (int).
+    Возвращает: кортеж (rounds: list, won: bool, hero_health: int).
+    Печатает: ход сражения по раундам. Глобальные переменные не меняет.
+    """
+    enemy_hp = 45.0
+    rounds = []
+    round_n = 0
+    print(f"You descend the stairs. Out of the darkness comes {enemy}!")
+    while enemy_hp > 0 and hero_health > 0:
+        round_n += 1
+        hit, crit = hero_hit(round_n)
+        enemy_hp -= hit
+        line = f"Round {round_n}: hero deals {hit:.1f}"
+        if crit:
+            line += " - critical!"
+        if enemy_hp <= 0:
+            line += " Enemy falls."
+            rounds.append([round_n, hit, 0])
+        else:
+            blow = random.randint(2, 6)
+            hero_health -= blow
+            line += f" {enemy} health: {enemy_hp:.1f}. {enemy.capitalize()} hits for {blow}."
+            rounds.append([round_n, hit, blow])
+        print(line)
+    return rounds, enemy_hp <= 0, hero_health
+
+def print_leaderboard(log):
+    """
+    Принимает: журнал боя log (list).
+    Возвращает: None.
+    Печатает: топ-3 раундов по урону героя и самый сильный пропущенный удар.
+    """
+    if not log:
+        print("You haven't fought yet.")
+        return
+    top = sorted(log, key=lambda r: r[1], reverse=True)[:3]
+    print("Leaderboard (hero damage):")
+    for i in range(len(top)):
+        print(f"{i + 1}. Round {top[i][0]}: {top[i][1]:.1f}")
+    worst = max(log, key=lambda r: r[2])
+    print(f"Strongest enemy hit: {worst[2]} (round {worst[0]}).")
+
+def print_run_summary(log):
+    """
+    Принимает: журнал боя log (list).
+    Возвращает: None.
+    Печатает: суммарный и средний нанесенный урон героя за весь забег.
+    """
+    total = sum(r[1] for r in log)
+    rounds = len(log)
+    if rounds > 0:
+        print(f"Damage: {total:.1f} across {rounds} rounds, average {total / rounds:.1f}.")
+    else:
+        print("No battles this run.")
+
 print("Как зовут героя?")
 hero_name = input()
 print(f"Добро пожаловать, {hero_name}!")
 print("Ты входишь в подземелье. Здесь темно и пахнет сыростью.")
 print()
 
-menu_last = 7
+menu_last = 8
 running = True
 actions = 0
 
@@ -65,6 +136,7 @@ try:
         print("5 - зажечь факел")
         print("6 - тренировка")
         print("7 - descend deeper")
+        print("8 - leaderboard")
         print("0 - выйти из подземелья")
         print()
 
@@ -114,16 +186,13 @@ try:
                 crit_count = 0
 
                 for i in range(1, strikes + 1):
-                    if i % 3 == 0:
-                        hit_damage = crit_damage
-                        crit_marker = " — критический!"
+                    hit_damage, crit = hero_hit(i)
+                    if crit:
                         crit_count += 1
+                        print(f"Удар {i}: {hit_damage:.1f} урона — критический!")
                     else:
-                        hit_damage = damage
-                        crit_marker = ""
-                    
+                        print(f"Удар {i}: {hit_damage:.1f} урона")
                     total_damage += hit_damage
-                    print(f"Удар {i}: {hit_damage:.1f} урона{crit_marker}")
                 
                 average_damage = total_damage / strikes
                 stamina_cost = 4
@@ -136,51 +205,20 @@ try:
                 print(f"Затраты сил на тренировку: {stamina_cost}")
                 
             case "7":
-                print("You descend the stairs...")
                 if not enemies:
-                    print("but the dungeon is empty")
+                    print("You descend the stairs. But the dungeon is empty.")
                 else:
                     enemy = random.choice(enemies)
-                    enemy_hp = 45.0
-                    round_n = 0
-                    print(f"A {enemy} emerges from the darkness!")
-                    print()
-                    
-                    hero_hits = 0
-                    while enemy_hp > 0 and health > 0:
-                        round_n += 1
-                        hero_hits += 1
-                        
-                        if hero_hits % 3 == 0:
-                            hit_damage = crit_damage
-                            is_crit = True
-                        else:
-                            hit_damage = damage
-                            is_crit = False
-                            
-                        enemy_hp -= hit_damage
-                        
-                        if enemy_hp <= 0:
-                            enemy_damage = 0
-                            if is_crit:
-                                print(f"Round {round_n}: hero hits {hit_damage:.1f}, enemy hp: 0.0. critical! The enemy falls.")
-                            else:
-                                print(f"Round {round_n}: hero hits {hit_damage:.1f}, enemy hp: 0.0. The enemy falls.")
-                            log.append(f"round {round_n}: hero -{hit_damage:.1f}, {enemy} -{enemy_damage}")
-                            break
-                        else:
-                            enemy_damage = random.randint(2, 6)
-                            health -= enemy_damage
-                            print(f"Round {round_n}: hero hits {hit_damage:.1f}, enemy hp: {enemy_hp:.1f}, enemy hits back: {enemy_damage}")
-                            log.append(f"round {round_n}: hero -{hit_damage:.1f}, {enemy} -{enemy_damage}")
-                    
-                    print()
-                    if enemy_hp <= 0:
+                    rounds, won, health = fight(enemy, health)
+                    for r in rounds:
+                        log.append(r)
+                    if won:
                         enemies.remove(enemy)
-                        print(f"The {enemy} is defeated! {len(enemies)} enemies left in the dungeon.")
-                    
-                    print(f"Combat: {round_n} rounds.")
-                    print(f"Последняя строка боя из журнала: {log[-1]}")
+                        print(f"{enemy.capitalize()} defeated! {len(enemies)} enemies left in the dungeon.")
+                    print(f"Battle: {len(rounds)} rounds.")
+
+            case "8":
+                print_leaderboard(log)
 
             case "0":
                 print("Вы поднимаетесь из глубоких соляных шахт обратно к солнцу.")
@@ -215,4 +253,6 @@ finally:
     else:
         print(f"Сеанс прерван, {hero_name}. Твоё путешествие внезапно оборвалось.")
         print(f"Вынужденная остановка посреди темноты. Действий совершено: {actions}.")
+        
+    print_run_summary(log)
     print(frame)
