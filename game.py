@@ -4,7 +4,17 @@
 # Дата: сентябрь 2026
 # ================================================
 
+import os
+import json
+import dungeon
 import random
+
+try:
+    from colorama import Fore, Style, init
+    init()
+    COLOR = True
+except ImportError:
+    COLOR = False
 
 title = "СОЛЯНЫЕ ШАХТЫ"
 frame = "=" * 19
@@ -12,39 +22,53 @@ print(frame)
 print(" " + title + " ")
 print(frame)
 
-while True:
-    try:
-        print("Введите начальные характеристики героя.")
-        health = int(input("Здоровье: "))
-        strength = int(input("Сила: "))
-        agility = int(input("Ловкость: "))
-        endurance = int(input("Выносливость: "))
-        max_stamina = int(input("Запас сил: "))
+loaded = None
+if os.path.exists("save.json"):
+    print("A save was found. Continue the run? (yes/no)")
+    answer = input().strip().lower()
+    if answer == "yes":
+        try:
+            with open("save.json", "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+        except json.JSONDecodeError:
+            print("Save file is corrupted! Starting a new game.")
+            loaded = None
 
-        if health <= 0:
-            raise ValueError(
-                f"Здоровье должно быть больше нуля, а введено {health}"
-            )
-        if health > 500:
-            raise ValueError(
-                f"Здоровье слишком огромное (максимум 500), а введено {health}"
-            )
-        if strength < 0 or agility < 0 or endurance < 0 or max_stamina < 0:
-            raise ValueError(
-                "Характеристики персонажа не могут быть отрицательными"
-            )
-        if strength > 100:
-            raise ValueError(
-                f"Предел силы превышен (максимум 100), а введено {strength}"
-            )
+if loaded is None:
+    while True:
+        try:
+            print("Введите начальные характеристики героя.")
+            health = int(input("Здоровье: "))
+            strength = int(input("Сила: "))
+            agility = int(input("Ловкость: "))
+            endurance = int(input("Выносливость: "))
+            max_stamina = int(input("Запас сил: "))
 
-        break
-    except ValueError as e:
-        print(f"\n[Ошибка]: {e}. Введите все пять характеристик снова:\n")
+            if health <= 0 or health > 500 or strength < 0 or agility < 0 or endurance < 0 or max_stamina < 0 or strength > 100:
+                raise ValueError("Некорректные значения характеристик.")
+            break
+        except ValueError:
+            print("\n[Ошибка]. Введите все характеристики снова:\n")
 
-max_health = health
-stamina = max_stamina
-print()
+    print("Как зовут героя?")
+    hero_name = input()
+    
+    hero = dungeon.Hero(hero_name, health, strength, agility, endurance)
+    hero.max_health = hero.health 
+else:
+    hero = dungeon.Hero.from_dict(loaded["hero"])
+    
+    hero.max_health = hero.health
+    
+    gold_total = loaded["gold"]
+    actions = loaded["actions"]
+    enemies = loaded["enemies"]
+    hero_r, hero_c = loaded["position"]
+    visited = {tuple(p) for p in loaded["visited"]}
+    found_loot = set(loaded["loot"])
+    
+    print(f"Run continued: {hero}")
+
 
 enemies = ["ghoul", "skeleton", "spider", "bat"]
 log = []
@@ -52,84 +76,6 @@ log = []
 base_attack = 10
 damage = base_attack + strength * 1.5
 crit_damage = damage * 2
-
-
-def hero_hit(strike_n):
-    """Рассчитывает урон героя за удар.
-
-    Параметры:
-        strike_n (int): Номер текущего удара.
-
-    Возвращает:
-        tuple:
-            damage (float): Нанесённый урон.
-            is_crit (bool): Флаг критического удара.
-
-    Ничего не печатает.
-    """
-    if strike_n % 3 == 0:
-        return crit_damage, True
-    return damage, False
-
-
-def fight(enemy, hero_health, bonus=0):
-    """Проводит бой героя с противником.
-
-    Параметры:
-        enemy (str): Имя противника.
-        hero_health (int): Текущее здоровье героя.
-        bonus (float, по умолчанию 0): Дополнительный бонус к урону героя.
-
-    Возвращает:
-        tuple:
-            rounds (list): Список записей раундов боя.
-            won (bool): Флаг победы героя (True, если враг повержен).
-            hero_health (int): Остаток здоровья героя после боя.
-            loot (int): Количество добытого золота.
-
-    Печатает лог каждого раунда боя.
-    """
-    enemy_hp = 45.0
-    rounds = []
-    round_n = 0
-
-    print(f"You descend the stairs. Out of the darkness comes {enemy}!")
-
-    while enemy_hp > 0 and hero_health > 0:
-        round_n += 1
-
-        hit, crit = hero_hit(round_n)
-        hit += bonus
-        enemy_hp -= hit
-
-        line = f"Round {round_n}: hero deals {hit:.1f}"
-
-        if crit:
-            line += " - critical!"
-
-        if enemy_hp <= 0:
-            line += " Enemy falls."
-            rounds.append([round_n, hit, 0])
-        else:
-            blow = random.randint(2, 6)
-            hero_health -= blow
-
-            line += (
-                f" {enemy} health: {enemy_hp:.1f}."
-                f" {enemy.capitalize()} hits for {blow}."
-            )
-            rounds.append([round_n, hit, blow])
-
-        print(line)
-
-    won = enemy_hp <= 0
-
-    if won:
-        loot = 10 + 5 * round_n
-    else:
-        loot = 0
-
-    return rounds, won, hero_health, loot
 
 
 def print_leaderboard(log):
@@ -179,28 +125,30 @@ def print_run_summary(log):
         print("No battles this run.")
 
 
-def buy(price, gold, quantity=1):
-    """Оформляет покупку товара в магазине.
+def scout(r, c, seen):
+    if (r, c) in seen or MAP[r][c] == "#":
+        return 0
+    seen.add((r, c))
+    total = 1
+    
+    for dr, dc in DIRECTIONS.values():
+        total += scout(r + dr, c + dc, seen)
+    return total
 
-    Параметры:
-        price (int): Цена одной единицы товара.
-        gold (int): Текущее количество золота у героя.
-        quantity (int, по умолчанию 1): Количество покупаемого товара.
+def write_save():
+    """Собирает состояние забега и пишет его в save.json."""
+    save = {}
+    save["hero"] = hero.to_dict()
+    
+    save["gold"] = gold_total
+    save["actions"] = actions
+    save["enemies"] = enemies
+    save["position"] = [hero_r, hero_c]
+    save["visited"] = [list(p) for p in visited]
+    save["loot"] = sorted(found_loot)
 
-    Возвращает:
-        tuple:
-            remaining_gold (int): Остаток золота после покупки.
-            success (bool): Флаг успешности покупки (True, если золота хватило).
-
-    Ничего не печатает.
-    """
-    cost = price * quantity
-
-    if gold >= cost:
-        return gold - cost, True
-
-    return gold, False
-
+    with open("save.json", "w", encoding="utf-8") as f:
+        json.dump(save, f, ensure_ascii=False, indent=2)
 
 print("Как зовут героя?")
 hero_name = input()
@@ -209,97 +157,146 @@ print(f"Добро пожаловать, {hero_name}!")
 print("Ты входишь в подземелье. Здесь темно и пахнет сыростью.")
 print()
 
-menu_last = 9
+menu_last = 10
 running = True
 actions = 0
 gold_total = 0
 ability_bonus = 0
+inventory = {}
+prices = {"potion": 15, "torch_oil": 10, "war_elixir": 25}
 
 outcome = "прерывание"
 
+enemy_stats = {
+"skeleton": {"hp": 45, "damage": 6, "loot": 25},
+"ghoul": {"hp": 30, "damage": 4, "loot": 15},
+"spider": {"hp": 20, "damage": 3, "loot": 10},
+"bat": {"hp": 12, "damage": 2, "loot": 5},
+}
+
+num_to_verb = {
+    "1": "look", "2": "go", "3": "rest", "4": "listen",
+    "5": "torch", "6": "train", "7": "descend", "8": "leaders",
+    "9": "shop", "10": "backpack", "11": "drink", "0": "exit"
+}
+
+commands = [
+    "look", "go", "rest", "listen", "torch", "train", "descend",
+    "leaders", "shop", "backpack", "drink potion",
+    "buy <item> [count]", "map", "scout", "newgame", "exit"
+]
+
+MENU = [
+    "What do you do? (number or command; help for help)",
+    "1 - look around (look)",
+    "2 - go forward (go)",
+    "3 - rest (rest)",
+    "4 - listen (listen)",
+    "5 - light a torch (torch)",
+    "6 - train (train)",
+    "7 - descend deeper (descend)",
+    "8 - leaderboard (leaders)",
+    "9 - shop (shop)",
+    "10 - backpack (backpack)",
+    "11 - drink potion (drink)",
+    "12 - show map (map)",
+    "13 - scout dungeon (scout)",
+    "newgame - start a new game (newgame)",
+    "0 - exit the dungeon (exit)"
+]
+
+MAP = [
+["#", "#", "#", "#", "#"],
+["#", ".", ".", "#", "#"],
+["#", ".", "#", ".", "#"],
+["#", ".", ".", ".", "#"],
+["#", "#", "S", ".", "#"],
+]
+
+DIRECTIONS = {"north": (-1, 0), "south": (1, 0), "west": (0, -1), "east": (0, 1)}
+
+hero_r, hero_c = 4, 2
+visited = {(4, 2)}
+
+LOOT = {(1, 1): "old coin", (2, 3): "dusty potion", (3, 3): "guard's gem"}
+found_loot = set()
+
 try:
     while running:
-        print("Что делаешь?")
-        print("1 - осмотреться")
-        print("2 - идти вперёд")
-        print("3 - отдохнуть")
-        print("4 - прислушаться")
-        print("5 - зажечь факел")
-        print("6 - тренировка")
-        print("7 - descend deeper")
-        print("8 - leaderboard")
-        print("9 - shop")
-        print("0 - выйти из подземелья")
+        print("\n".join(MENU))
         print()
 
-        while True:
-            choice = input("Выберите действие: ")
 
-            try:
-                menu_number = int(choice)
-            except ValueError:
-                print(
-                    "Ошибка: нужно ввести числовой номер пункта меню. "
-                    "Попробуйте снова."
-                )
-                continue
+        print()
 
-            if 0 <= menu_number <= menu_last:
-                choice = str(menu_number)
-                break
+        line = input()
+        cmd = line.strip().lower()
+        while cmd == "":
+            print("Empty command. Type a command or number.")
+            line = input()
+            cmd = line.strip().lower()
+        
+        words = cmd.split()
+        verb = words[0]
+        
+        if cmd in num_to_verb:
+            verb = num_to_verb[cmd]
 
-            print(
-                f"Такого пункта нет. Введите число от 0 до {menu_last}."
-            )
 
-        match choice:
-            case "1":
+        match verb:
+            case "look":
                 print(
                     "Вы осмотрелись. Комната пуста, только пыль на полу."
                 )
 
-            case "2":
-                cost = 2
-
-                if stamina >= cost:
-                    stamina -= cost
-                    print(
-                        "Вы осторожно идёте вперёд. Пол скрипит под ногами."
-                    )
+            case "go":
+                if len(words) > 1 and words[1] in DIRECTIONS:
+                    dr, dc = DIRECTIONS[words[1]]
+                    nr, nc = hero_r + dr, hero_c + dc
+                    
+                    if 0 <= nr < len(MAP) and 0 <= nc < len(MAP[nr]) and MAP[nr][nc] != "#":
+                        hero_r, hero_c = nr, nc
+                        visited.add((hero_r, hero_c))
+                        print(f"You step {words[1]}. Room ({hero_r}, {hero_c}).")
+                        
+                        # Подбор лута после успешного шага
+                        if (hero_r, hero_c) in LOOT:
+                            item = LOOT[(hero_r, hero_c)]
+                            if item not in found_loot:
+                                found_loot.add(item)
+                                print(f"You found {item}! Unique loot: {len(found_loot)}.")
+                    else:
+                        print(f"Cannot go {words[1]}: wall or edge.")
                 else:
-                    health -= cost - stamina
-                    stamina = 0
-                    print(
-                        "Сил больше нет — вы идёте на одном упорстве."
-                    )
+                    cost = 2
 
-            case "3":
-                if stamina < max_stamina:
-                    stamina += 1
-                    print(
-                        "Вы присели отдохнуть на соляной блок. "
-                        "Усталость постепенно уходит."
-                    )
+                exhausted = hero.spend_stamina(cost)
+                if not exhausted:
+                    print("Вы осторожно идёте вперёд. Пол скрипит под ногами.")
                 else:
-                    print(
-                        "Вы полны сил и готовы к действиям! "
-                        "Отдыхать больше нет смысла."
-                    )
+                    print("Сил больше нет — вы идёте на одном упорстве.")
 
-            case "4":
+            case "rest":
+                if hero.stamina < hero.max_health // 10 + hero.endurance:
+                    hero.stamina += 1
+                    print("Вы присели отдохнуть на соляной блок. Усталость постепенно уходит.")
+                else:
+                    print("Вы полны сил и готовы к действиям! Отдыхать больше нет смысла.")
+
+            case "listen":
                 print(
                     "Вы замерли и прислушались. Где-то вдалеке "
                     "капает вода, опасности не слышно."
                 )
 
-            case "5":
+            case "torch":
                 stamina -= 1
                 print(
                     "Вы чиркнули кресалом и зажгли факел. "
                     "Тратится энергия, но стало гораздо светлее."
                 )
 
-            case "6":
+            case "train":
                 strikes = 6
 
                 print(
@@ -317,7 +314,7 @@ try:
                 crit_count = 0
 
                 for i in range(1, strikes + 1):
-                    hit_damage, crit = hero_hit(i)
+                    hit_damage, crit = hero.strike(i)
 
                     if crit:
                         crit_count += 1
@@ -332,7 +329,8 @@ try:
 
                 average_damage = total_damage / strikes
                 stamina_cost = 4
-                stamina -= stamina_cost
+                hero.spend_stamina(stamina_cost)
+
 
                 print()
                 print(
@@ -349,7 +347,7 @@ try:
                     f"Затраты сил на тренировку: {stamina_cost}"
                 )
 
-            case "7":
+            case "descend":
                 if not enemies:
                     print(
                         "You descend the stairs. "
@@ -358,9 +356,11 @@ try:
                 else:
                     enemy = random.choice(enemies)
 
-                    rounds, won, health, loot = fight(
+                    rounds, won, health, loot = dungeon.fight(
                         enemy,
                         health,
+                        damage,
+                        crit_damage,
                         bonus=ability_bonus
                     )
 
@@ -378,120 +378,118 @@ try:
 
                     print(f"Battle: {len(rounds)} rounds.")
 
-            case "8":
+            case "leaders":
                 print_leaderboard(log)
 
-            case "9":
+            
+            case "shop":
                 print("Shop:")
-                print("1 - potion (+10 health): 10 gold")
-                print("2 - torch oil (+5 stamina): 15 gold")
-                print("3 - war elixir (+2 damage for the run): 40 gold")
-                print("Item number (0 - not buying):")
+                for name, price in prices.items():
+                    print(f"{name}: {price} gold")
 
-                item = input()
 
-                prices = (10, 15, 40)
-                names = ("potion", "torch oil", "war elixir")
-
-                if item in ("1", "2", "3"):
-                    price = prices[int(item) - 1]
-                    name = names[int(item) - 1]
-
-                    print("Quantity (Enter for one):")
-                    qty_line = input()
-
-                    if qty_line == "":
-                        qty = 1
-                    else:
-                        try:
-                            qty = int(qty_line)
-                        except ValueError:
-                            qty = 0
-                            print(
-                                "Quantity must be a positive whole number."
-                            )
-
-                    if qty <= 0:
-                        if qty_line != "":
-                            print(
-                                "Quantity must be a positive whole number."
-                            )
-                    else:
-                        new_gold, ok = buy(
-                            price,
-                            gold_total,
-                            quantity=qty
-                        )
-
-                        if ok:
-
-                            gold_total = new_gold
-
-                            if item == "1":
-                                health = min(
-                                    health + 10 * qty,
-                                    max_health
-                                )
-
-                            elif item == "2":
-                                stamina = min(
-                                    stamina + 5 * qty,
-                                    max_stamina
-                                )
-
-                            elif item == "3":
-                                ability_bonus += 2 * qty
-
-                            print(
-                                f"Bought {qty} {name} for "
-                                f"{price * qty} gold. "
-                                f"Gold left: {gold_total}."
-                            )
-                        else:
-                            print(
-                                f"Not enough gold: need {price * qty}, "
-                                f"have {gold_total}."
-                            )
-
-                elif item != "0":
+            case "buy":
+                if len(words) > 1 and words[-1].isdigit():
+                    qty = int(words[-1])
+                    item = " ".join(words[1:-1])
+                else:
+                    qty = 1
+                    item = " ".join(words[1:])
+                if item == "":
+                    print("Buy what? Type: buy <item>.")
+                    continue
+                if item not in prices:
                     print("No such item in the shop.")
+                    continue
+                gold_total, ok = dungeon.buy(prices[item], gold_total, quantity=qty)
+                if ok:
+                    inventory[item] = inventory.get(item, 0) + qty
+                    print(f"Bought {qty} {item} for {prices[item] * qty} gold. Gold left: {gold_total}.")
+                else:
+                    print(f"Not enough gold: need {prices[item] * qty}, have {gold_total}.")
 
-            case "0":
-                print(
-                    "Вы поднимаетесь из глубоких соляных шахт "
-                    "обратно к солнцу."
-                )
-                print(
-                    "Свежий воздух приятно обдувает лицо "
-                    "после душных пещер."
-                )
+            case "scout":
+                seen = set()
+                print(f"Scout: {scout(hero_r, hero_c, seen)} rooms reachable.")
 
-                outcome = "выход"
+            case "newgame":
+                if os.path.exists("save.json"):
+                    os.remove("save.json")
+                    print("Save destroyed. The next run starts fresh.")
+                else:
+                    print("No save to destroy.")
+                continue
+
+            case "backpack":
+                if not inventory:
+                    print("Backpack is empty.")
+                else:
+                    print("Backpack:")
+                    for name, qty in inventory.items():
+                        print(f"{name}: {qty} pcs")
+
+            case "drink":
+                item = " ".join(words[1:]) or "potion"
+                if inventory.get(item, 0) == 0:
+                    print(f"No {item} in the backpack.")
+                else:
+                    hero.heal(10, hero.max_health)
+                    inventory[item] -= 1
+                    if inventory[item] == 0:
+                        del inventory[item]
+                    print(f"You drink a {item}. Health: {health}. Potions left: {inventory.get(item, 0)}")
+
+            case "map":
+                print("Map:")
+                for i in range(len(MAP)):
+                    cells = []
+                    for j in range(len(MAP[i])):
+                        cell = "@" if (i, j) == (hero_r, hero_c) else MAP[i][j]
+                        cells.append(cell)
+                    print(" ".join(cells))      
+
+            case "help":
+                print("Commands: " + ", ".join(commands) + ".")
+                print("Numbers 0-11 work as before.")
+
+            case "exit":
+                print("You climb back toward the light. The dungeon stays behind.")
+                write_save()
+                print("Progress saved.")
+                outcome = "exit"
                 running = False
 
-        if health <= 0:
-            print(
-                f"{hero_name} падает без сил на холодный пол. "
-                "Шахты забирают ещё одну жизнь."
-            )
+            case _:
+                print(f"Don't understand command: '{line.strip()}'. Type 'help'.")
+                continue
 
-            outcome = "гибель"
+
+        if health <= 0:
+            print(f"{hero_name} falls. The dungeon claims another seeker.")
+            if os.path.exists("save.json"):
+                os.remove("save.json")
+            outcome = "death"
             running = False
+
 
         if running:
             actions += 1
 
         print()
-        print(
-            f"Health: {health} Stamina: {stamina} "
-            f"Enemies left: {len(enemies)} Gold: {gold_total}"
-        )
+        state = f"Health: {hero.health} Stamina: {hero.stamina} Enemies left: {len(enemies)} Gold: {gold_total}"
+        if COLOR:
+            print(Fore.GREEN + state + Style.RESET_ALL)
+        else:
+            print(state)
+
         print("-" * 50)
         print()
 
 except KeyboardInterrupt:
     print()
-    print("Игрок прервал сеанс.")
+    print("The player ended the session.")
+    write_save()
+
 
 finally:
     print(frame)
@@ -528,6 +526,13 @@ finally:
             f"Действий совершено: {actions}. "
             f"Золота собрано: {gold_total}"
         )
+
+    if inventory:
+        print("Left behind in the backpack:")
+        for name, qty in inventory.items():
+            print(f"{name}: {qty} pcs")
+    else:
+        print("Left behind in the backpack: nothing.")
 
     print_run_summary(log)
     print(frame)
